@@ -1,4 +1,10 @@
 __pycache__/
 *.pyc
+venv/
+env/
+.venv/
 node_modules/
 CLAUDE.md
+
+.claude/
+    
