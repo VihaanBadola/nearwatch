@@ -1,6 +1,7 @@
 import * as THREE from "three"
 import { FlyControls } from "three/examples/jsm/controls/FlyControls.js"
 
+// Core scene/camera/renderer setup
 const scene = new THREE.Scene()
 
 const camera = new THREE.PerspectiveCamera(
@@ -15,6 +16,7 @@ const renderer = new THREE.WebGLRenderer()
 renderer.setSize(window.innerWidth, window.innerHeight)
 document.body.appendChild(renderer.domElement)
 
+// FlyControls handles WASD/R/F movement; look direction is driven manually below
 const controls = new FlyControls(camera, renderer.domElement)
 controls.movementSpeed = 20
 controls.rollSpeed = Math.PI / 6
@@ -22,6 +24,7 @@ controls.dragToLook = true
 
 const clock = new THREE.Clock()
 
+// Tracked separately from the camera's quaternion so we can force this orientation every frame, overriding FlyControls' own mouse-hover rotation
 let yaw = 0
 let pitch = 0
 const PITCH_LIMIT = Math.PI / 2 - 0.01
@@ -31,6 +34,7 @@ renderer.domElement.addEventListener("contextmenu", (event) => {
     event.preventDefault()
 })
 
+// Right-click locks the pointer for 3D mouse-look; left-click starts a 2D drag-pan
 renderer.domElement.addEventListener("mousedown", (event) => {
     if (event.button === 2 && mode === "3D") {
         renderer.domElement.requestPointerLock()
@@ -46,6 +50,7 @@ window.addEventListener("mouseup", () => {
     isDragging2D = false
 })
 
+// Mouse-look only applies while the pointer is actually locked
 document.addEventListener("mousemove", (event) => {
     if (document.pointerLockElement !== renderer.domElement) return
     yaw -= event.movementX * LOOK_SENSITIVITY
@@ -55,6 +60,7 @@ document.addEventListener("mousemove", (event) => {
 
 let mode = "3D"
 
+// 2D mode: locked top-down orthographic camera looking down -Z (the plane where the JPL position data actually has real X/Y separation)
 const orthoHalfHeight = 100
 const orthoAspect = window.innerWidth / window.innerHeight
 const camera2D = new THREE.OrthographicCamera(
@@ -72,6 +78,7 @@ camera2D.lookAt(0, 0, 0)
 let isDragging2D = false
 const lastPointer2D = { x: 0, y: 0 }
 
+// Drag-to-pan: content follows the cursor, scaled by current zoom level
 window.addEventListener("mousemove", (event) => {
     if (!isDragging2D) return
     const dx = event.clientX - lastPointer2D.x
@@ -83,6 +90,7 @@ window.addEventListener("mousemove", (event) => {
     camera2D.position.y += dy * unitsPerPixel
 })
 
+// Scroll-to-zoom, using Three.js's built-in orthographic zoom factor
 renderer.domElement.addEventListener("wheel", (event) => {
     if (mode !== "2D") return
     event.preventDefault()
@@ -97,6 +105,7 @@ function resetCamera2D() {
     camera2D.updateProjectionMatrix()
 }
 
+// Toggle button switches between free-flight 3D and the top-down 2D map
 const modeToggleButton = document.getElementById("mode-toggle-button")
 modeToggleButton.addEventListener("click", () => {
     mode = mode === "3D" ? "2D" : "3D"
@@ -110,6 +119,7 @@ modeToggleButton.addEventListener("click", () => {
     }
 })
 
+// Earth and Sun placeholder meshes; Earth's real position comes from the fetch below
 const earthGeometry = new THREE.SphereGeometry(1, 32, 32)
 const earthMaterial = new THREE.MeshBasicMaterial({ color: 0x2266ff })
 const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial)
@@ -129,6 +139,7 @@ function animate() {
     let activeCamera
     if (mode === "3D") {
         controls.update(delta)
+        // Force our own tracked look direction every frame, since FlyControls would otherwise keep nudging rotation based on cursor position
         camera.rotation.set(pitch, yaw, 0, "YXZ")
 
         renderer.render(scene, camera)
@@ -138,6 +149,7 @@ function animate() {
         activeCamera = camera2D
     }
 
+    // Skip the mirror update if the camera is right at the origin, since normalizing a near-zero vector produces NaN and would freeze the gizmo
     if (activeCamera.position.length() > 0.001) {
         gizmoCamera.position.copy(activeCamera.position).normalize().multiplyScalar(5)
         gizmoCamera.up.copy(activeCamera.up)
@@ -148,6 +160,7 @@ function animate() {
 
 const SCALE = 10_000_000
 
+// Real km values from the backend need to be scaled down to usable Three.js units
 fetch("http://127.0.0.1:8080/earth")
     .then((response) => response.json())
     .then((data) => {
@@ -163,10 +176,12 @@ const VIEW_DISTANCE = 100
 
 const snapHelper = new THREE.Object3D()
 
+// Snaps the 3D camera to a preset position facing the origin, updating th tracked yaw/pitch too (otherwise animate()'s override would undo the snap)
 function snapToView(position) {
     camera.position.set(position.x, position.y, position.z)
 
     snapHelper.position.copy(camera.position)
+    // Straight up/down views need a different up vector, since the default (0,1,0) is parallel to the view direction there and breaks lookAt
     const isVertical = Math.abs(position.x) < 1e-6 && Math.abs(position.z) < 1e-6
     snapHelper.up.set(0, isVertical ? 0 : 1, isVertical ? -1 : 0)
     snapHelper.lookAt(0, 0, 0)
@@ -181,6 +196,7 @@ function snapToDirection(direction) {
     snapToView(direction.clone().multiplyScalar(VIEW_DISTANCE))
 }
 
+// Draws a labeled face texture for one side of the gizmo cube
 function makeFaceMaterial(label) {
     const canvas = document.createElement("canvas")
     canvas.width = 128
@@ -209,6 +225,7 @@ const GIZMO_FACES = [
     { label: "Back", direction: new THREE.Vector3(0, 0, -1) }
 ]
 
+// Small secondary viewport (top-right) showing a CAD-style ViewCube gizmo
 const gizmoScene = new THREE.Scene()
 const gizmoCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 100)
 
@@ -226,6 +243,7 @@ const gizmoCube = new THREE.Mesh(
 )
 gizmoScene.add(gizmoCube)
 
+// Small corner markers give quick access to isometric-style diagonal views
 const gizmoCorners = []
 for (const sx of [1, -1]) {
     for (const sy of [1, -1]) {
@@ -246,6 +264,7 @@ for (const sx of [1, -1]) {
 const gizmoRaycaster = new THREE.Raycaster()
 const gizmoPointer = new THREE.Vector2()
 
+// Clicking a face or corner snaps the main 3D camera to that view
 gizmoRenderer.domElement.addEventListener("click", (event) => {
     if (mode !== "3D") return
 
