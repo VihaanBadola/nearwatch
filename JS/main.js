@@ -4,6 +4,17 @@ import { FlyControls } from "three/examples/jsm/controls/FlyControls.js"
 // Core scene/camera/renderer setup
 const scene = new THREE.Scene()
 
+// Starfield backdrop. Equirect mapping wraps it around the scene for the
+// perspective 3D camera; a plain flat copy is used for 2D's orthographic
+// camera, since equirect sampling needs perspective divergence to look right
+const backgroundLoader = new THREE.TextureLoader()
+const starfieldTexture = backgroundLoader.load("Textures/stars_milky_way.jpg")
+starfieldTexture.mapping = THREE.EquirectangularReflectionMapping
+
+const starfieldTextureFlat = backgroundLoader.load("Textures/stars_milky_way.jpg")
+
+scene.background = starfieldTexture
+
 const camera = new THREE.PerspectiveCamera(
     75,
     window.innerWidth / window.innerHeight,
@@ -60,7 +71,7 @@ document.addEventListener("mousemove", (event) => {
 
 let mode = "3D"
 
-// 2D mode: locked top-down orthographic camera looking down -Z (the plane where the JPL position data actually has real X/Y separation)
+// 2D mode: locked top-down orthographic camera looking down -Y, now that the orbital plane is remapped onto Three.js's horizontal X-Z plane
 const orthoHalfHeight = 100
 const orthoAspect = window.innerWidth / window.innerHeight
 const camera2D = new THREE.OrthographicCamera(
@@ -71,8 +82,8 @@ const camera2D = new THREE.OrthographicCamera(
     0.1,
     1000
 )
-camera2D.position.set(0, 0, 100)
-camera2D.up.set(0, 1, 0)
+camera2D.position.set(0, 100, 0)
+camera2D.up.set(0, 0, -1)
 camera2D.lookAt(0, 0, 0)
 
 let isDragging2D = false
@@ -87,7 +98,7 @@ window.addEventListener("mousemove", (event) => {
     lastPointer2D.y = event.clientY
     const unitsPerPixel = (orthoHalfHeight * 2) / window.innerHeight / camera2D.zoom
     camera2D.position.x -= dx * unitsPerPixel
-    camera2D.position.y += dy * unitsPerPixel
+    camera2D.position.z -= dy * unitsPerPixel
 })
 
 // Scroll-to-zoom, using Three.js's built-in orthographic zoom factor
@@ -100,7 +111,7 @@ renderer.domElement.addEventListener("wheel", (event) => {
 }, { passive: false })
 
 function resetCamera2D() {
-    camera2D.position.set(0, 0, 100)
+    camera2D.position.set(0, 100, 0)
     camera2D.zoom = 1
     camera2D.updateProjectionMatrix()
 }
@@ -111,6 +122,9 @@ modeToggleButton.addEventListener("click", () => {
     mode = mode === "3D" ? "2D" : "3D"
     modeToggleButton.textContent = mode === "3D" ? "Switch to 2D" : "Switch to 3D"
     gizmoRenderer.domElement.style.display = mode === "3D" ? "block" : "none"
+    // Equirect mapping only renders correctly under a perspective camera, so
+    // 2D's orthographic top-down view uses a plain flat copy of the same image
+    scene.background = mode === "3D" ? starfieldTexture : starfieldTextureFlat
     if (mode === "2D") {
         if (document.pointerLockElement === renderer.domElement) {
             document.exitPointerLock()
@@ -120,21 +134,49 @@ modeToggleButton.addEventListener("click", () => {
 })
 
 // Earth and Sun placeholder meshes; Earth's real position comes from the fetch below
-const earthGeometry = new THREE.SphereGeometry(1, 32, 32)
-const earthMaterial = new THREE.MeshBasicMaterial({ color: 0x2266ff })
-const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial)
-earthMesh.position.set(0, 0, 0)
-scene.add(earthMesh)
+const textureLoader = new THREE.TextureLoader()
 
-const sunGeometry = new THREE.SphereGeometry(3, 32, 32)
-const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffaa00 })
-const sunMesh = new THREE.Mesh(sunGeometry, sunMaterial)
-sunMesh.position.set(0, 0, 0)
-scene.add(sunMesh)
+// lit: true reacts to scene lighting (planets); false stays self-illuminated (light sources)
+function createBody({ radius, texturePath, lit }) {
+    const geometry = new THREE.SphereGeometry(radius, 32, 32)
+    const material = lit
+        ? new THREE.MeshStandardMaterial({ map: textureLoader.load(texturePath) })
+        : new THREE.MeshBasicMaterial({ map: textureLoader.load(texturePath) })
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.position.set(0, 0, 0)
+    scene.add(mesh)
+    return mesh
+}
+
+const earthMesh = createBody({ radius: 1, texturePath: "Textures/earth_daymap.jpg", lit: true })
+const sunMesh = createBody({ radius: 3, texturePath: "Textures/8k_sun.jpg", lit: false })
+
+// No /mars endpoint yet, so this fakes a circular orbit (not real physics)
+// on the horizontal plane at roughly Mars' real ~1.52 AU distance, scaled
+const marsMesh = createBody({ radius: 0.5, texturePath: "Textures/8k_mars.jpg", lit: true })
+const MARS_ORBIT_RADIUS = 22
+const MARS_ORBIT_SPEED = 0.2
+let marsOrbitAngle = 0
+
+// MeshStandardMaterial needs an actual light source, unlike MeshBasicMaterial
+const sunLight = new THREE.PointLight(0xffffff, 2, 0, 0)
+sunLight.position.set(0, 0, 0)
+scene.add(sunLight)
+
+// Dim ambient fill so Earth's night side isn't pure black
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.15)
+scene.add(ambientLight)
 
 function animate() {
     requestAnimationFrame(animate)
     const delta = clock.getDelta()
+
+    marsOrbitAngle += MARS_ORBIT_SPEED * delta
+    marsMesh.position.set(
+        Math.cos(marsOrbitAngle) * MARS_ORBIT_RADIUS,
+        0,
+        Math.sin(marsOrbitAngle) * MARS_ORBIT_RADIUS
+    )
 
     let activeCamera
     if (mode === "3D") {
@@ -165,10 +207,14 @@ fetch("http://127.0.0.1:8080/earth")
     .then((response) => response.json())
     .then((data) => {
         console.log(data)
+        // JPL's Y/Z are swapped here: the real orbital plane sits in JPL's X-Y,
+        // but Three.js is Y-up, so that plane needs to land on X-Z (horizontal)
+        // instead of X-Y (vertical) -- otherwise Earth sits "above" the Sun
+        // along the vertical axis and gets lit from below, on the wrong pole
         earthMesh.position.set(
             data.position[0] / SCALE,
-            data.position[1] / SCALE,
-            data.position[2] / SCALE
+            data.position[2] / SCALE,
+            data.position[1] / SCALE
         )
     })
 
