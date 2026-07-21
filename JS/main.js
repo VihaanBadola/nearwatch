@@ -158,6 +158,8 @@ const MARS_ORBIT_RADIUS = 22
 const MARS_ORBIT_SPEED = 0.2
 let marsOrbitAngle = 0
 
+
+
 // MeshStandardMaterial needs an actual light source, unlike MeshBasicMaterial
 const sunLight = new THREE.PointLight(0xffffff, 2, 0, 0)
 sunLight.position.set(0, 0, 0)
@@ -187,6 +189,7 @@ function animate() {
         renderer.render(scene, camera)
         activeCamera = camera
     } else {
+        
         renderer.render(scene, camera2D)
         activeCamera = camera2D
     }
@@ -236,6 +239,7 @@ function snapToView(position) {
     yaw = euler.y
     pitch = euler.x
     camera.rotation.set(pitch, yaw, 0, "YXZ")
+    console.log("camera moved")
 }
 
 function snapToDirection(direction) {

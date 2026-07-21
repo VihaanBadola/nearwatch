@@ -15,7 +15,7 @@ app.add_middleware(
 
 @app.get("/")
 def health_check():
-    return {"message": "OrbitForge backend is running"}
+    return {"message": "nearwatch backend is running"}
 
 
 @app.get("/earth")
